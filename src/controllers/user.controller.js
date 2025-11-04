@@ -222,8 +222,8 @@ const getAllUsers = asyncHandler(async (req, res) => {
 const createUser = asyncHandler(async (req, res) => {
   const { name, email, username, password, role, phone, address, bio } = req.body;
 
-  if (!name || !email || !username || !password || !role) {
-    throw new ApiError(400, "Name, email, username, password, and role are required");
+  if (!name || !email || !username || !role) {
+    throw new ApiError(400, "Name, email, username, and role are required");
   }
 
   // Check if user already exists (check username and email separately)
@@ -246,10 +246,11 @@ const createUser = asyncHandler(async (req, res) => {
   }
 
   // Create user in Supabase Auth
+  const tempPassword = password || `Tmp!${Math.random().toString(36).slice(2)}${Date.now()}`;
   const { data: authUser, error: authError } = await supabaseAdmin.auth.admin.createUser({
     email,
-    password,
-    email_confirm: true, // Auto-confirm email
+    password: tempPassword,
+    email_confirm: true,
     user_metadata: {
       name,
       username,
@@ -281,6 +282,36 @@ const createUser = asyncHandler(async (req, res) => {
     // If profile update fails, try to delete the auth user
     await supabaseAdmin.auth.admin.deleteUser(authUser.user.id);
     throw new ApiError(500, "Failed to create user profile");
+  }
+
+  // If no password provided by admin, send invite email with setup link
+  if (!password) {
+    try {
+      const token = Math.random().toString(36).slice(2) + Date.now().toString(36);
+      await redisClient.setEx(`invite:${authUser.user.id}`, 60 * 60 * 24 * 7, token); // 7 days
+
+      const linkBase = (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/$/, '');
+      const inviteUrl = `${linkBase}/set-password?token=${encodeURIComponent(token)}&email=${encodeURIComponent(email)}`;
+
+      const emailHtml = wrapEmail({
+        title: "Invitation",
+        contentHtml: `
+          <p>Bonjour ${name},</p>
+          <p>Un compte vous a été créé sur <strong>Seven Talent Hub</strong>.</p>
+          <p>Veuillez définir votre mot de passe pour accéder à la plateforme :</p>
+          <p><a class="btn" href="${inviteUrl}">Définir mon mot de passe</a></p>
+          <p class="small-note">Ce lien est valable 7 jours.</p>
+        `,
+      });
+
+      await sendMail({
+        to: email,
+        subject: "Bienvenue sur Seven Talent Hub - Définissez votre mot de passe",
+        html: emailHtml,
+      });
+    } catch (e) {
+      console.error('Invite email error:', e);
+    }
   }
 
   res.status(201).json(new ApiResponse(201, newProfile, "User created successfully"));
@@ -521,6 +552,96 @@ const resetPassword = asyncHandler(async (req, res) => {
   res.status(200).json(new ApiResponse(200, {}, "Password reset successfully"));
 });
 
+// Send or resend an invite link to a user by email (admin-only)
+const sendInvite = asyncHandler(async (req, res) => {
+  const { email } = req.body;
+
+  if (!email) {
+    throw new ApiError(400, "Email is required");
+  }
+
+  const { data: profile } = await supabaseAdmin
+    .from("profiles")
+    .select("id, name, email")
+    .eq("email", email)
+    .single();
+
+  if (!profile) {
+    throw new ApiError(404, "User not found");
+  }
+
+  const token = Math.random().toString(36).slice(2) + Date.now().toString(36);
+  await redisClient.setEx(`invite:${profile.id}`, 60 * 60 * 24 * 7, token);
+
+  const linkBase = (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/$/, '');
+  const inviteUrl = `${linkBase}/set-password?token=${encodeURIComponent(token)}&email=${encodeURIComponent(email)}`;
+
+  const emailHtml = wrapEmail({
+    title: "Invitation",
+    contentHtml: `
+      <p>Bonjour ${profile.name},</p>
+      <p>Voici votre lien pour définir un mot de passe et accéder à la plateforme.</p>
+      <p><a class="btn" href="${inviteUrl}">Définir mon mot de passe</a></p>
+      <p class="small-note">Ce lien est valable 7 jours.</p>
+    `,
+  });
+
+  await sendMail({
+    to: email,
+    subject: "Invitation Seven Talent Hub",
+    html: emailHtml,
+  });
+
+  res.status(200).json(new ApiResponse(200, {}, "Invite sent"));
+});
+
+// Accept invite: set password using one-time token and auto-login
+const acceptInvite = asyncHandler(async (req, res) => {
+  const { email, token, password } = req.body;
+
+  if (!email || !token || !password) {
+    throw new ApiError(400, "Email, token and password are required");
+  }
+
+  const { data: profile, error: profileError } = await supabaseAdmin
+    .from("profiles")
+    .select("id, name, email, username, role, active")
+    .eq("email", email)
+    .single();
+
+  if (profileError || !profile) {
+    throw new ApiError(404, "User not found");
+  }
+
+  // Verify token
+  const stored = await redisClient.get(`invite:${profile.id}`);
+  if (!stored || stored !== token) {
+    throw new ApiError(401, "Invalid or expired invite token");
+  }
+
+  // Set the password in Supabase Auth
+  const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(profile.id, {
+    password,
+  });
+  if (updateError) {
+    throw new ApiError(500, "Failed to set password");
+  }
+
+  // Consume token
+  await redisClient.del(`invite:${profile.id}`);
+
+  // Auto-login to return session
+  const { data: authData, error: authError } = await supabaseAdmin.auth.signInWithPassword({
+    email: profile.email,
+    password,
+  });
+  if (authError || !authData?.session) {
+    throw new ApiError(500, "Failed to create session");
+  }
+
+  res.status(200).json(new ApiResponse(200, { user: profile, session: authData.session }, "Invite accepted"));
+});
+
 const requestEmailChange = asyncHandler(async (req, res) => {
   const userId = req.user.id;
   const { newEmail } = req.body;
@@ -652,6 +773,8 @@ export {
   forgotPassword,
   resetPassword,
   verifyResetCode,
+  sendInvite,
+  acceptInvite,
   requestEmailChange,
   verifyEmailChange,
 };
