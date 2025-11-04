@@ -8,7 +8,7 @@ import {
   deleteActivity,
   getActivitiesByConsultant,
   getActivitiesByClient,
-} from "../Controllers/activity.controller.js";
+} from "../controllers/activity.controller.js";
 
 const router = Router();
 

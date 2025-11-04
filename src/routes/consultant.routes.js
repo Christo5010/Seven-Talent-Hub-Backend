@@ -7,7 +7,7 @@ import {
   updateConsultant,
   deleteConsultant,
   searchConsultants,
-} from "../Controllers/consultant.controller.js";
+} from "../controllers/consultant.controller.js";
 import { upload } from "../middlewares/multer.middleware.js";
 
 const router = Router();
