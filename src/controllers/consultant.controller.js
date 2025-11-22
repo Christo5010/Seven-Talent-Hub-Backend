@@ -137,16 +137,23 @@ const createConsultant = asyncHandler(async (req, res) => {
   // Create notification if consultant is assigned to different user
   if (createdConsultant.commercial_id && createdConsultant.commercial_id !== currentUser.id) {
     try {
+      const io = req.app.get('io');
       await notificationService.addNotification({
         type: "assignment",
         message: `${currentUser.name} a assigné ${createdConsultant.name} à vous.`,
         entity_type: "consultant",
         entity_id: createdConsultant.id,
         recipient_id: createdConsultant.commercial_id,
-      });
+      }, io);
     } catch (notifError) {
       console.error("Notification error:", notifError);
     }
+  }
+
+  // Emit Socket.IO event for real-time updates
+  const io = req.app.get('io');
+  if (io && createdConsultant) {
+    io.emit('consultant:created', createdConsultant);
   }
 
   res.status(201).json(new ApiResponse(201, createdConsultant, "Consultant created successfully"));
@@ -307,13 +314,14 @@ const updateConsultant = asyncHandler(async (req, res) => {
     updateData.commercial_id
   ) {
     try {
+      const io = req.app.get('io');
       await notificationService.addNotification({
         type: "assignment",
         message: `${currentUser.name} vous a assigné ${updatedConsultant.name}.`,
         entity_type: "consultant",
         entity_id: updatedConsultant.id,
         recipient_id: updateData.commercial_id,
-      });
+      }, io);
     } catch (notifError) {
       console.error("Notification error:", notifError);
     }
@@ -327,16 +335,23 @@ const updateConsultant = asyncHandler(async (req, res) => {
     updatedConsultant.commercial_id
   ) {
     try {
+      const io = req.app.get('io');
       await notificationService.addNotification({
         type: "availability",
         message: `${updatedConsultant.name} est de nouveau disponible.`,
         entity_type: "consultant",
         entity_id: updatedConsultant.id,
         recipient_id: updatedConsultant.commercial_id,
-      });
+      }, io);
     } catch (notifError) {
       console.error("Notification error:", notifError);
     }
+  }
+
+  // Emit Socket.IO event for real-time updates
+  const io = req.app.get('io');
+  if (io && updatedConsultant) {
+    io.emit('consultant:updated', updatedConsultant);
   }
 
   res.status(200).json(new ApiResponse(200, updatedConsultant, "Consultant updated successfully"));
@@ -345,10 +360,23 @@ const updateConsultant = asyncHandler(async (req, res) => {
 const deleteConsultant = asyncHandler(async (req, res) => {
   const { id } = req.params;
 
+  // Get consultant before deleting to emit socket event
+  const { data: consultantToDelete } = await supabaseAdmin
+    .from("consultants")
+    .select("*")
+    .eq("id", id)
+    .single();
+
   const { error } = await supabaseAdmin.from("consultants").delete().eq("id", id);
 
   if (error) {
-    throw new ApiError(500, "Failed to delete consultant");
+    throw new ApiError(500, `Failed to delete consultant: ${error.message}`);
+  }
+
+  // Emit Socket.IO event for real-time updates
+  const io = req.app.get('io');
+  if (io && consultantToDelete) {
+    io.emit('consultant:deleted', { id: id, ...consultantToDelete });
   }
 
   res.status(200).json(new ApiResponse(200, {}, "Consultant deleted successfully"));

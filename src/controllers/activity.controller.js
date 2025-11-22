@@ -248,10 +248,23 @@ const updateActivity = asyncHandler(async (req, res) => {
 const deleteActivity = asyncHandler(async (req, res) => {
   const { id } = req.params;
 
+  // Get activity before deleting to emit socket event
+  const { data: activityToDelete } = await supabaseAdmin
+    .from("activities")
+    .select("*")
+    .eq("id", id)
+    .single();
+
   const { error } = await supabaseAdmin.from("activities").delete().eq("id", id);
 
   if (error) {
-    throw new ApiError(500, "Failed to delete activity");
+    throw new ApiError(500, `Failed to delete activity: ${error.message}`);
+  }
+
+  // Emit Socket.IO event for real-time updates
+  const io = req.app.get('io');
+  if (io && activityToDelete) {
+    io.emit('activity:deleted', { id: id, ...activityToDelete });
   }
 
   res.status(200).json(new ApiResponse(200, {}, "Activity deleted successfully"));

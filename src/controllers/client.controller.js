@@ -127,6 +127,12 @@ const createClient = asyncHandler(async (req, res) => {
     }
   }
 
+  // Emit Socket.IO event for real-time updates
+  const io = req.app.get('io');
+  if (io && createdClient) {
+    io.emit('client:created', createdClient);
+  }
+
   res.status(201).json(new ApiResponse(201, createdClient, "Client created successfully"));
 });
 
@@ -198,7 +204,7 @@ const deleteClient = asyncHandler(async (req, res) => {
   // Check if it's a company, and if so, unlink individuals
   const { data: clientToDelete } = await supabaseAdmin
     .from("clients")
-    .select("type")
+    .select("*")
     .eq("id", id)
     .single();
 
@@ -214,7 +220,13 @@ const deleteClient = asyncHandler(async (req, res) => {
   const { error } = await supabaseAdmin.from("clients").delete().eq("id", id);
 
   if (error) {
-    throw new ApiError(500, "Failed to delete client");
+    throw new ApiError(500, `Failed to delete client: ${error.message}`);
+  }
+
+  // Emit Socket.IO event for real-time updates
+  const io = req.app.get('io');
+  if (io && clientToDelete) {
+    io.emit('client:deleted', { id: id, ...clientToDelete });
   }
 
   res.status(200).json(new ApiResponse(200, {}, "Client deleted successfully"));
