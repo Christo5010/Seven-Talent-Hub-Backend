@@ -9,7 +9,7 @@ import { Server } from 'socket.io';
 const app = express();
 const httpServer = createServer(app);
 
-// Initialize Socket.IO
+// Initialize Socket.IO with production-ready configuration
 const io = new Server(httpServer, {
   cors: {
     origin: function (origin, callback) {
@@ -23,7 +23,8 @@ const io = new Server(httpServer, {
         "http://127.0.0.1:3000",
         "http://localhost:4173",
         "http://127.0.0.1:4173",
-        /https?:\/\/.*\.vercel\.app$/
+        /https?:\/\/.*\.vercel\.app$/,
+        /https?:\/\/.*\.vercel\.app:\d+$/
       ];
       const isAllowed = allowList.some((allowed) => {
         if (allowed instanceof RegExp) return allowed.test(origin);
@@ -33,7 +34,16 @@ const io = new Server(httpServer, {
     },
     credentials: true,
     methods: ['GET', 'POST']
-  }
+  },
+  // Production configuration for Render/Vercel
+  transports: ['websocket', 'polling'],
+  allowEIO3: true,
+  pingTimeout: 60000,
+  pingInterval: 25000,
+  // Enable CORS for Socket.IO
+  allowUpgrades: true,
+  // Handle connection issues in production
+  connectTimeout: 45000,
 });
 
 // Socket.IO connection handling
