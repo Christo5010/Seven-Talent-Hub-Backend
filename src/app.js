@@ -140,7 +140,12 @@ app.use((err, req, res, next) => {
   });
 });
 
-httpServer.listen(port, () => {
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', redis: io ? 'connected' : 'disconnected' });
+})
+
+
+httpServer.listen(port, '0.0.0.0', () => {
   console.log(`Server running on port ${port}`);
 })
 
