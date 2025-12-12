@@ -114,10 +114,19 @@ const createConsultant = asyncHandler(async (req, res) => {
       : null,
     is_favorite: consultantData.isFavorite === true || consultantData.isFavorite === "true",
     is_blacklisted: consultantData.isBlacklisted === true || consultantData.isBlacklisted === "true",
+    is_excluded: consultantData.isExcluded === true || consultantData.isExcluded === "true",
     blacklist_reason: consultantData.blacklistReason || null,
     blacklist_date: consultantData.blacklistDate || null,
     next_followup: consultantData.nextFollowup || null,
     color: consultantData.color || null,
+    city: consultantData.city && consultantData.city.trim() ? consultantData.city.trim() : null,
+    department: consultantData.department && consultantData.department.trim() ? consultantData.department.trim() : null,
+    latitude: consultantData.latitude !== null && consultantData.latitude !== '' && consultantData.latitude !== undefined
+      ? parseFloat(consultantData.latitude) 
+      : null,
+    longitude: consultantData.longitude !== null && consultantData.longitude !== '' && consultantData.longitude !== undefined
+      ? parseFloat(consultantData.longitude) 
+      : null,
     experiences: experiences || [],
     last_activity: new Date().toISOString(),
     created_by: currentUser.id,
@@ -216,22 +225,34 @@ const updateConsultant = asyncHandler(async (req, res) => {
   if (cvFileUrl) updateData.cv_file_url = cvFileUrl;
 
   if (consultantData.tags !== undefined) {
-    updateData.tags =
-      typeof consultantData.tags === "string" ? JSON.parse(consultantData.tags) : consultantData.tags;
+    try {
+      updateData.tags =
+        typeof consultantData.tags === "string" ? JSON.parse(consultantData.tags) : consultantData.tags;
+    } catch (e) {
+      updateData.tags = [];
+    }
   }
 
   if (consultantData.experiences !== undefined) {
-    updateData.experiences =
-      typeof consultantData.experiences === "string"
-        ? JSON.parse(consultantData.experiences)
-        : consultantData.experiences;
+    try {
+      updateData.experiences =
+        typeof consultantData.experiences === "string"
+          ? JSON.parse(consultantData.experiences)
+          : consultantData.experiences;
+    } catch (e) {
+      updateData.experiences = [];
+    }
   }
 
   if (consultantData.availability !== undefined) {
-    updateData.availability =
-      typeof consultantData.availability === "string"
-        ? JSON.parse(consultantData.availability)
-        : consultantData.availability;
+    try {
+      updateData.availability =
+        typeof consultantData.availability === "string"
+          ? JSON.parse(consultantData.availability)
+          : consultantData.availability;
+    } catch (e) {
+      updateData.availability = { status: "available", date: null };
+    }
   }
 
   if (consultantData.yearsOfExperience !== undefined || consultantData.years_of_experience !== undefined) {
@@ -265,10 +286,14 @@ const updateConsultant = asyncHandler(async (req, res) => {
   }
 
   if (consultantData.sevenAcademyTraining !== undefined) {
-    updateData.seven_academy_training =
-      typeof consultantData.sevenAcademyTraining === "string"
-        ? JSON.parse(consultantData.sevenAcademyTraining)
-        : consultantData.sevenAcademyTraining;
+    try {
+      updateData.seven_academy_training =
+        typeof consultantData.sevenAcademyTraining === "string"
+          ? JSON.parse(consultantData.sevenAcademyTraining)
+          : consultantData.sevenAcademyTraining;
+    } catch (e) {
+      updateData.seven_academy_training = null;
+    }
   }
 
   if (consultantData.isFavorite !== undefined || consultantData.is_favorite !== undefined) {
@@ -293,7 +318,51 @@ const updateConsultant = asyncHandler(async (req, res) => {
     updateData.blacklist_date = consultantData.blacklistDate || consultantData.blacklist_date || null;
   }
 
+  if (consultantData.isExcluded !== undefined || consultantData.is_excluded !== undefined) {
+    const excludedValue = consultantData.isExcluded !== undefined ? consultantData.isExcluded : consultantData.is_excluded;
+    // FormData sends booleans as strings, so handle both
+    updateData.is_excluded =
+      excludedValue === true ||
+      excludedValue === "true" ||
+      String(excludedValue).toLowerCase() === 'true';
+  }
+
+  // Handle city, department, latitude, longitude - always include if defined (even if empty string)
+  // FormData sends everything as strings, so we need to handle that
+  if (consultantData.city !== undefined) {
+    const cityValue = String(consultantData.city).trim();
+    updateData.city = cityValue && cityValue !== '' && cityValue !== 'null' && cityValue !== 'undefined' ? cityValue : null;
+  }
+  if (consultantData.department !== undefined) {
+    const deptValue = String(consultantData.department).trim();
+    updateData.department = deptValue && deptValue !== '' && deptValue !== 'null' && deptValue !== 'undefined' && deptValue !== 'none' ? deptValue : null;
+  }
+  if (consultantData.latitude !== undefined) {
+    const latStr = String(consultantData.latitude).trim();
+    if (latStr && latStr !== '' && latStr !== 'null' && latStr !== 'undefined') {
+      const lat = parseFloat(latStr);
+      updateData.latitude = !isNaN(lat) ? lat : null;
+    } else {
+      updateData.latitude = null;
+    }
+  }
+  if (consultantData.longitude !== undefined) {
+    const lonStr = String(consultantData.longitude).trim();
+    if (lonStr && lonStr !== '' && lonStr !== 'null' && lonStr !== 'undefined') {
+      const lon = parseFloat(lonStr);
+      updateData.longitude = !isNaN(lon) ? lon : null;
+    } else {
+      updateData.longitude = null;
+    }
+  }
   updateData.last_activity = new Date().toISOString();
+
+  // Remove undefined values to avoid issues
+  Object.keys(updateData).forEach(key => {
+    if (updateData[key] === undefined) {
+      delete updateData[key];
+    }
+  });
 
   const { data: updatedConsultant, error } = await supabaseAdmin
     .from("consultants")
@@ -303,8 +372,10 @@ const updateConsultant = asyncHandler(async (req, res) => {
     .single();
 
   if (error) {
-    console.log(error)
-    throw new ApiError(500, `Failed to update consultant: ${error.message}`);
+    console.error("Supabase update error:", error);
+    console.error("Update data keys:", Object.keys(updateData));
+    console.error("Error details:", JSON.stringify(error, null, 2));
+    throw new ApiError(500, `Failed to update consultant: ${error.message || error.details || JSON.stringify(error)}`);
   }
 
   // Create notifications for assignment change
