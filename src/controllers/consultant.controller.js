@@ -37,6 +37,15 @@ const createConsultant = asyncHandler(async (req, res) => {
   const consultantData = req.body;
   const cvFile = req.file;
   const currentUser = req.user;
+  
+  // Debug: Log entire request body to see what multer parsed
+  console.log('=== CREATE CONSULTANT DEBUG ===');
+  console.log('Full req.body keys:', Object.keys(req.body));
+  console.log('Full req.body:', JSON.stringify(req.body, null, 2));
+  console.log('Received otherLanguages in create:', consultantData.otherLanguages, 'type:', typeof consultantData.otherLanguages);
+  console.log('Received other_languages in create:', consultantData.other_languages, 'type:', typeof consultantData.other_languages);
+  console.log('Raw otherLanguages value:', consultantData.otherLanguages);
+  console.log('Raw other_languages value:', consultantData.other_languages);
 
   // Handle CV file upload if provided
   let cvFileUrl = null;
@@ -62,6 +71,12 @@ const createConsultant = asyncHandler(async (req, res) => {
   let tags = consultantData.tags;
   let experiences = consultantData.experiences;
   let availability = consultantData.availability;
+  // Try both camelCase and snake_case field names for otherLanguages
+  let otherLanguages = consultantData.otherLanguages !== undefined 
+    ? consultantData.otherLanguages 
+    : (consultantData.other_languages !== undefined ? consultantData.other_languages : undefined);
+  let testResults = consultantData.testResults || consultantData.test_results;
+  let qualityControl = consultantData.qualityControl || consultantData.quality_control;
 
   if (typeof tags === "string") {
     try {
@@ -84,6 +99,45 @@ const createConsultant = asyncHandler(async (req, res) => {
       availability = JSON.parse(availability);
     } catch (e) {
       availability = { status: "available", date: null };
+    }
+  }
+
+  // Handle otherLanguages - parse if string, ensure it's always an array
+  console.log('Processing otherLanguages:', otherLanguages, 'type:', typeof otherLanguages);
+  if (otherLanguages === undefined || otherLanguages === null) {
+    otherLanguages = [];
+  } else if (typeof otherLanguages === "string") {
+    try {
+      otherLanguages = JSON.parse(otherLanguages);
+      // Ensure it's an array after parsing
+      if (!Array.isArray(otherLanguages)) {
+        console.log('Parsed otherLanguages is not an array, defaulting to []');
+        otherLanguages = [];
+      }
+    } catch (e) {
+      console.log('Error parsing otherLanguages:', e);
+      otherLanguages = [];
+    }
+  } else if (!Array.isArray(otherLanguages)) {
+    // If it's not a string and not an array, default to empty array
+    console.log('otherLanguages is not an array, defaulting to []');
+    otherLanguages = [];
+  }
+  console.log('Final otherLanguages value:', otherLanguages);
+
+  if (typeof testResults === "string") {
+    try {
+      testResults = JSON.parse(testResults);
+    } catch (e) {
+      testResults = [];
+    }
+  }
+
+  if (typeof qualityControl === "string") {
+    try {
+      qualityControl = JSON.parse(qualityControl);
+    } catch (e) {
+      qualityControl = { references: [], clientFeedbacks: [] };
     }
   }
 
@@ -128,15 +182,32 @@ const createConsultant = asyncHandler(async (req, res) => {
       ? parseFloat(consultantData.longitude) 
       : null,
     experiences: experiences || [],
+    other_languages: Array.isArray(otherLanguages) ? otherLanguages : [],
+    test_results: testResults || [],
+    quality_control: qualityControl || { references: [], clientFeedbacks: [] },
     last_activity: new Date().toISOString(),
     created_by: currentUser.id,
   };
+  
+  // Debug: Log the other_languages value being inserted
+  console.log('Inserting other_languages into Supabase:', newConsultant.other_languages, 'Type:', typeof newConsultant.other_languages, 'Is Array:', Array.isArray(newConsultant.other_languages));
 
+  // Debug: Log entire newConsultant object before insert
+  console.log('Full newConsultant object before insert:', JSON.stringify(newConsultant, null, 2));
+  
   const { data: createdConsultant, error } = await supabaseAdmin
     .from("consultants")
     .insert(newConsultant)
     .select("*")
     .single();
+  
+  // Debug: Log what was actually created
+  if (createdConsultant) {
+    console.log('Created consultant other_languages:', createdConsultant.other_languages);
+  }
+  if (error) {
+    console.error('Supabase insert error:', error);
+  }
 
   if (error) {
     console.log(error)
@@ -325,6 +396,47 @@ const updateConsultant = asyncHandler(async (req, res) => {
       excludedValue === true ||
       excludedValue === "true" ||
       String(excludedValue).toLowerCase() === 'true';
+  }
+
+  // Handle other_languages, test_results, quality_control
+  if (consultantData.otherLanguages !== undefined || consultantData.other_languages !== undefined) {
+    try {
+      const otherLangs = consultantData.otherLanguages || consultantData.other_languages;
+      if (typeof otherLangs === "string") {
+        // Parse JSON string
+        const parsed = JSON.parse(otherLangs);
+        updateData.other_languages = Array.isArray(parsed) ? parsed : [];
+      } else if (Array.isArray(otherLangs)) {
+        // Already an array
+        updateData.other_languages = otherLangs;
+      } else {
+        // Default to empty array
+        updateData.other_languages = [];
+      }
+    } catch (e) {
+      updateData.other_languages = [];
+    }
+  } else {
+    // Always set other_languages, even if not provided (default to empty array)
+    updateData.other_languages = [];
+  }
+
+  if (consultantData.testResults !== undefined || consultantData.test_results !== undefined) {
+    try {
+      const testRes = consultantData.testResults || consultantData.test_results;
+      updateData.test_results = typeof testRes === "string" ? JSON.parse(testRes) : (testRes || []);
+    } catch (e) {
+      updateData.test_results = [];
+    }
+  }
+
+  if (consultantData.qualityControl !== undefined || consultantData.quality_control !== undefined) {
+    try {
+      const qc = consultantData.qualityControl || consultantData.quality_control;
+      updateData.quality_control = typeof qc === "string" ? JSON.parse(qc) : (qc || { references: [], clientFeedbacks: [] });
+    } catch (e) {
+      updateData.quality_control = { references: [], clientFeedbacks: [] };
+    }
   }
 
   // Handle city, department, latitude, longitude - always include if defined (even if empty string)
